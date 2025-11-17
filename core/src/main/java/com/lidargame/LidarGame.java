@@ -104,13 +104,10 @@ public class LidarGame extends ApplicationAdapter {
                 new Material(ColorAttribute.createDiffuse(new Color(0.08f, 0.1f, 0.12f, 1f))),
                 com.badlogic.gdx.graphics.VertexAttributes.Usage.Position | com.badlogic.gdx.graphics.VertexAttributes.Usage.Normal);
 
-        // Dots rendered as small spheres; scaled per-hit during shooting.
-        Material dotMaterial = new Material();
-        dotMaterial.set(ColorAttribute.createDiffuse(Color.WHITE));
-        dotMaterial.set(ColorAttribute.createEmissive(Color.WHITE));
+        // Dots rendered as small spheres; color set per-hit based on distance
         dotModel = modelBuilder.createSphere(
                 0.3f, 0.3f, 0.3f, 8, 8,
-                dotMaterial,
+                new Material(),
                 com.badlogic.gdx.graphics.VertexAttributes.Usage.Position | com.badlogic.gdx.graphics.VertexAttributes.Usage.Normal);
 
         // Generic box for obstacles.
@@ -186,7 +183,7 @@ public class LidarGame extends ApplicationAdapter {
             Gdx.input.setCursorCatched(cursorCaptured);
         }
         if (cursorCaptured) {
-            float deltaX = -Gdx.input.getDeltaX() * MOUSE_SENSITIVITY;
+            float deltaX = Gdx.input.getDeltaX() * MOUSE_SENSITIVITY;
             float deltaY = -Gdx.input.getDeltaY() * MOUSE_SENSITIVITY;
             yaw = (yaw + deltaX) % 360f;
             pitch = MathUtils.clamp(pitch + deltaY, -85f, 85f);
@@ -277,6 +274,24 @@ public class LidarGame extends ApplicationAdapter {
             ModelInstance dot = new ModelInstance(dotModel);
             dot.transform.setToTranslation(hitPoint);
             dot.transform.scale(size, size, size);
+            
+            // Thermal gradient: red (close) -> yellow (medium) -> blue (far)
+            float t = closest / MAX_RAY_DISTANCE;
+            Color thermalColor = new Color();
+            if (t < 0.5f) {
+                // Red to Yellow (0.0 to 0.5)
+                float blend = t * 2f;
+                thermalColor.set(1f, blend, 0f, 1f);
+            } else {
+                // Yellow to Blue (0.5 to 1.0)
+                float blend = (t - 0.5f) * 2f;
+                thermalColor.set(1f - blend, 1f - blend, blend, 1f);
+            }
+            
+            Material mat = dot.materials.get(0);
+            mat.set(ColorAttribute.createDiffuse(thermalColor));
+            mat.set(ColorAttribute.createEmissive(thermalColor));
+            
             lidarDots.add(new Dot(dot, DOT_LIFETIME));
         }
     }
