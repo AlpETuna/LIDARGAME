@@ -29,13 +29,15 @@ import com.badlogic.gdx.utils.Array;
 public class LidarGame extends ApplicationAdapter {
 
     private static final float WORLD_SIZE = 90f;
-    private static final float PLAYER_HEIGHT = 1.6f;
-    private static final float PLAYER_RADIUS = 1.2f;
+    private static final float PLAYER_HEIGHT = 1.3f;
+    private static final float PLAYER_RADIUS = 1.3f;
     private static final float MOVE_SPEED = 16f;
+    private static final float GRAVITY = -30f;
+    private static final float JUMP_VELOCITY = 12f;
     private static final float MOUSE_SENSITIVITY = 0.25f;
-    private static final float MAX_RAY_DISTANCE = 65f;
-    private static final float FIRE_RATE = 30f; // shots per second
-    private static final float DOT_LIFETIME = 2.2f;
+    private static final float MAX_RAY_DISTANCE = 30f;
+    private static final float FIRE_RATE = 100f; // shots per second
+    private static final float DOT_LIFETIME = 5f;
 
     private PerspectiveCamera camera;
     private float yaw = 0f;
@@ -43,6 +45,9 @@ public class LidarGame extends ApplicationAdapter {
 
     private final Vector3 position = new Vector3(10f, PLAYER_HEIGHT, 10f);
     private boolean cursorCaptured = true;
+    private boolean testingMode = false;
+    private float velocityY = 0f;
+    private boolean onGround = false;
 
     private ModelBatch modelBatch;
     private ModelBuilder modelBuilder;
@@ -90,6 +95,7 @@ public class LidarGame extends ApplicationAdapter {
     private Environment buildEnvironment() {
         Environment env = new Environment();
         env.set(new ColorAttribute(ColorAttribute.AmbientLight, 0f, 0f, 0f, 1f));
+        env.add(new DirectionalLight().set(0.8f, 0.8f, 0.8f, -0.5f, -1f, -0.5f));
         return env;
     }
 
@@ -118,24 +124,140 @@ public class LidarGame extends ApplicationAdapter {
 
     private void buildWorld() {
         floorInstance = new ModelInstance(floorModel);
-
-        // Sparse "backrooms" corridors using long blocks
-        for (int i = -2; i <= 2; i++) {
-            addBox(new Vector3(i * 18f, 6f, 0f), new Vector3(4f, 12f, 80f));
+        
+        // Generate 3D cave using multi-octave Perlin noise for organic shapes
+        int gridSize = 2;
+        float scale1 = 0.1f;
+        float scale2 = 0.25f;
+        float threshold = 0.3f;
+        
+        for (int x = -20; x <= 20; x += gridSize) {
+            for (int y = 0; y <= 30; y += gridSize) {
+                for (int z = -20; z <= 20; z += gridSize) {
+                    // Combine multiple noise octaves for more organic terrain
+                    float noise1 = perlin3D(x * scale1, y * scale1, z * scale1);
+                    float noise2 = perlin3D(x * scale2, y * scale2, z * scale2) * 0.5f;
+                    float combinedNoise = noise1 + noise2;
+                    
+                    if (combinedNoise > threshold) {
+                        // Vary block size slightly for more organic look
+                        float sizeVariation = 1f + MathUtils.random(-0.3f, 0.3f);
+                        addBox(new Vector3(x, y, z), new Vector3(gridSize * sizeVariation, gridSize * sizeVariation, gridSize * sizeVariation));
+                    }
+                }
+            }
         }
-        for (int i = -2; i <= 2; i++) {
-            addBox(new Vector3(0f, 6f, i * 18f), new Vector3(80f, 12f, 4f));
+        
+        // Add boundary walls to contain the player
+        int wallThickness = 2;
+        for (int x = -24; x <= 24; x += gridSize) {
+            for (int y = 0; y <= 30; y += gridSize) {
+                // Front and back walls
+                addBox(new Vector3(x, y, -24), new Vector3(gridSize, gridSize, wallThickness));
+                addBox(new Vector3(x, y, 24), new Vector3(gridSize, gridSize, wallThickness));
+            }
         }
-        addBox(new Vector3(-25f, 4f, -25f), new Vector3(14f, 8f, 14f));
-        addBox(new Vector3(22f, 4f, 22f), new Vector3(14f, 8f, 14f));
-        addBox(new Vector3(-30f, 8f, 18f), new Vector3(6f, 16f, 10f));
-        addBox(new Vector3(30f, 8f, -18f), new Vector3(6f, 16f, 10f));
-
-        // Perimeter walls to keep the player inside.
-        addBox(new Vector3(0f, 3f, -WORLD_SIZE), new Vector3(WORLD_SIZE * 2f, 6f, 2f), true);
-        addBox(new Vector3(0f, 3f, WORLD_SIZE), new Vector3(WORLD_SIZE * 2f, 6f, 2f), true);
-        addBox(new Vector3(-WORLD_SIZE, 3f, 0f), new Vector3(2f, 6f, WORLD_SIZE * 2f), true);
-        addBox(new Vector3(WORLD_SIZE, 3f, 0f), new Vector3(2f, 6f, WORLD_SIZE * 2f), true);
+        for (int z = -24; z <= 24; z += gridSize) {
+            for (int y = 0; y <= 30; y += gridSize) {
+                // Left and right walls
+                addBox(new Vector3(-24, y, z), new Vector3(wallThickness, gridSize, gridSize));
+                addBox(new Vector3(24, y, z), new Vector3(wallThickness, gridSize, gridSize));
+            }
+        }
+        // Ceiling
+        for (int x = -24; x <= 24; x += gridSize) {
+            for (int z = -24; z <= 24; z += gridSize) {
+                addBox(new Vector3(x, 34, z), new Vector3(gridSize, wallThickness, gridSize));
+            }
+        }
+        
+        // Find safe spawn position
+        position.set(0f, 15f, 0f);
+        boolean foundSafe = false;
+        for (int attempts = 0; attempts < 200; attempts++) {
+            float testX = MathUtils.random(-15f, 15f);
+            float testZ = MathUtils.random(-15f, 15f);
+            float testY = 15f;
+            Vector3 testPos = new Vector3(testX, testY, testZ);
+            
+            boolean safe = true;
+            for (BoxObstacle ob : obstacles) {
+                if (ob.bounds.contains(testPos)) {
+                    safe = false;
+                    break;
+                }
+            }
+            
+            if (safe) {
+                position.set(testPos);
+                foundSafe = true;
+                break;
+            }
+        }
+        
+        if (!foundSafe) {
+            position.set(0f, 25f, 0f);
+        }
+    }
+    
+    private float perlin3D(float x, float y, float z) {
+        int X = (int)Math.floor(x) & 255;
+        int Y = (int)Math.floor(y) & 255;
+        int Z = (int)Math.floor(z) & 255;
+        
+        x -= Math.floor(x);
+        y -= Math.floor(y);
+        z -= Math.floor(z);
+        
+        float u = fade(x);
+        float v = fade(y);
+        float w = fade(z);
+        
+        int A = p[X] + Y;
+        int AA = p[A] + Z;
+        int AB = p[A + 1] + Z;
+        int B = p[X + 1] + Y;
+        int BA = p[B] + Z;
+        int BB = p[B + 1] + Z;
+        
+        return lerp(w, lerp(v, lerp(u, grad(p[AA], x, y, z),
+                                       grad(p[BA], x - 1, y, z)),
+                               lerp(u, grad(p[AB], x, y - 1, z),
+                                       grad(p[BB], x - 1, y - 1, z))),
+                       lerp(v, lerp(u, grad(p[AA + 1], x, y, z - 1),
+                                       grad(p[BA + 1], x - 1, y, z - 1)),
+                               lerp(u, grad(p[AB + 1], x, y - 1, z - 1),
+                                       grad(p[BB + 1], x - 1, y - 1, z - 1))));
+    }
+    
+    private float fade(float t) {
+        return t * t * t * (t * (t * 6 - 15) + 10);
+    }
+    
+    private float lerp(float t, float a, float b) {
+        return a + t * (b - a);
+    }
+    
+    private float grad(int hash, float x, float y, float z) {
+        int h = hash & 15;
+        float u = h < 8 ? x : y;
+        float v = h < 4 ? y : h == 12 || h == 14 ? x : z;
+        return ((h & 1) == 0 ? u : -u) + ((h & 2) == 0 ? v : -v);
+    }
+    
+    private static final int[] p = new int[512];
+    static {
+        int[] permutation = {151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,
+            8,99,37,240,21,10,23,190,6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,
+            88,237,149,56,87,174,20,125,136,171,168,68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,
+            229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,65,25,63,161,1,216,80,73,209,76,
+            132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,186,3,64,52,217,226,250,
+            124,123,5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,
+            213,119,248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,110,79,113,
+            224,232,178,185,112,104,218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241,81,51,145,
+            235,249,14,239,107,49,192,214,31,181,199,106,157,184,84,204,176,115,121,50,45,127,4,150,254,138,
+            236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180};
+        for (int i = 0; i < 256; i++) p[256 + i] = p[i] = permutation[i];
     }
 
     private void addBox(Vector3 center, Vector3 size) {
@@ -164,10 +286,14 @@ public class LidarGame extends ApplicationAdapter {
         Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
 
         modelBatch.begin(camera);
-        modelBatch.render(floorInstance, environment);
-        for (BoxObstacle ob : obstacles) {
-            modelBatch.render(ob.instance, environment);
+        if (testingMode) {
+            // In testing mode, show everything
+            modelBatch.render(floorInstance, environment);
+            for (BoxObstacle ob : obstacles) {
+                modelBatch.render(ob.instance, environment);
+            }
         }
+        // Always render dots
         for (Dot hit : lidarDots) {
             modelBatch.render(hit.instance, environment);
         }
@@ -182,8 +308,17 @@ public class LidarGame extends ApplicationAdapter {
             cursorCaptured = !cursorCaptured;
             Gdx.input.setCursorCatched(cursorCaptured);
         }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.T)) {
+            testingMode = !testingMode;
+            // Toggle environment lighting
+            if (testingMode) {
+                environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.6f, 0.6f, 0.6f, 1f));
+            } else {
+                environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0f, 0f, 0f, 1f));
+            }
+        }
         if (cursorCaptured) {
-            float deltaX = Gdx.input.getDeltaX() * MOUSE_SENSITIVITY;
+            float deltaX = -Gdx.input.getDeltaX() * MOUSE_SENSITIVITY;
             float deltaY = -Gdx.input.getDeltaY() * MOUSE_SENSITIVITY;
             yaw = (yaw + deltaX) % 360f;
             pitch = MathUtils.clamp(pitch + deltaY, -85f, 85f);
@@ -193,6 +328,7 @@ public class LidarGame extends ApplicationAdapter {
         Vector3 forward = new Vector3(camera.direction.x, 0f, camera.direction.z).nor();
         Vector3 right = new Vector3(forward).crs(Vector3.Y).nor();
 
+        // Horizontal movement
         if (Gdx.input.isKeyPressed(Input.Keys.W)) move.add(forward);
         if (Gdx.input.isKeyPressed(Input.Keys.S)) move.sub(forward);
         if (Gdx.input.isKeyPressed(Input.Keys.A)) move.sub(right);
@@ -201,15 +337,60 @@ public class LidarGame extends ApplicationAdapter {
         if (!move.isZero()) {
             move.nor().scl(MOVE_SPEED * delta);
             Vector3 candidate = new Vector3(position).add(move);
-            candidate.y = PLAYER_HEIGHT; // lock height
             candidate.x = MathUtils.clamp(candidate.x, -WORLD_SIZE + PLAYER_RADIUS, WORLD_SIZE - PLAYER_RADIUS);
             candidate.z = MathUtils.clamp(candidate.z, -WORLD_SIZE + PLAYER_RADIUS, WORLD_SIZE - PLAYER_RADIUS);
             if (!collides(candidate)) {
-                position.set(candidate);
+                position.x = candidate.x;
+                position.z = candidate.z;
+            }
+        }
+        
+        // Jump
+        if (Gdx.input.isKeyJustPressed(Input.Keys.SPACE) && onGround) {
+            velocityY = JUMP_VELOCITY;
+            onGround = false;
+        }
+        
+        // Apply gravity
+        velocityY += GRAVITY * delta;
+        float newY = position.y + velocityY * delta;
+        
+        // Check vertical collision with blocks
+        Vector3 testPos = new Vector3(position.x, newY, position.z);
+        boolean hitBlock = false;
+        
+        for (BoxObstacle ob : obstacles) {
+            if (ob.collidesVertical(testPos, PLAYER_RADIUS, velocityY < 0)) {
+                if (velocityY < 0) {
+                    // Landing on top of block
+                    position.y = ob.bounds.max.y + PLAYER_HEIGHT;
+                    velocityY = 0f;
+                    onGround = true;
+                    hitBlock = true;
+                    break;
+                } else {
+                    // Hitting ceiling
+                    position.y = ob.bounds.min.y - 0.1f;
+                    velocityY = 0f;
+                    hitBlock = true;
+                    break;
+                }
+            }
+        }
+        
+        if (!hitBlock) {
+            position.y = newY;
+            // Ground collision
+            if (position.y <= PLAYER_HEIGHT) {
+                position.y = PLAYER_HEIGHT;
+                velocityY = 0f;
+                onGround = true;
+            } else {
+                onGround = false;
             }
         }
 
-        boolean shootPressed = Gdx.input.isButtonPressed(Input.Buttons.LEFT) || Gdx.input.isKeyPressed(Input.Keys.SPACE);
+        boolean shootPressed = Gdx.input.isButtonPressed(Input.Buttons.LEFT);
         autoFireTimer -= delta;
         if (shootPressed && autoFireTimer <= 0f) {
             shootLidar();
@@ -220,7 +401,9 @@ public class LidarGame extends ApplicationAdapter {
     }
 
     private boolean collides(Vector3 candidate) {
-        // Temporarily disabled for testing
+        for (BoxObstacle ob : obstacles) {
+            if (ob.collides3D(candidate, PLAYER_RADIUS, PLAYER_HEIGHT)) return true;
+        }
         return false;
     }
 
@@ -232,7 +415,7 @@ public class LidarGame extends ApplicationAdapter {
         Vector3 hitPoint = new Vector3();
 
         // Add random spray to the direction
-        float spreadAngle = 8f;
+        float spreadAngle = 15f;
         float randomYaw = MathUtils.random(-spreadAngle, spreadAngle);
         float randomPitch = MathUtils.random(-spreadAngle, spreadAngle);
         
@@ -383,11 +566,16 @@ public class LidarGame extends ApplicationAdapter {
     }
 
     private void updateCameraDirection() {
-        camera.direction.set(0f, 0f, -1f)
-                .rotate(Vector3.Y, yaw)
-                .rotate(Vector3.X, pitch)
-                .nor();
-        camera.up.set(Vector3.Y);
+        float pitchRad = pitch * MathUtils.degreesToRadians;
+        float yawRad = yaw * MathUtils.degreesToRadians;
+        
+        camera.direction.set(
+            MathUtils.cos(pitchRad) * MathUtils.sin(yawRad),
+            MathUtils.sin(pitchRad),
+            MathUtils.cos(pitchRad) * MathUtils.cos(yawRad)
+        ).nor();
+        
+        camera.up.set(0f, 1f, 0f);
     }
 
     @Override
@@ -431,6 +619,41 @@ public class LidarGame extends ApplicationAdapter {
             float dx = Math.abs(point.x - center.x);
             float dz = Math.abs(point.z - center.z);
             return dx <= (size.x * 0.5f + radius) && dz <= (size.z * 0.5f + radius);
+        }
+        
+        boolean collides3D(Vector3 point, float radius, float height) {
+            // Check horizontal collision with expanded radius
+            float dx = Math.abs(point.x - center.x);
+            float dz = Math.abs(point.z - center.z);
+            
+            if (dx > (size.x * 0.5f + radius) || dz > (size.z * 0.5f + radius)) {
+                return false;
+            }
+            
+            // Check vertical overlap - player cylinder from (y - height) to y
+            float playerBottom = point.y - height;
+            float playerTop = point.y + 0.5f;
+            float boxBottom = bounds.min.y;
+            float boxTop = bounds.max.y;
+            
+            return !(playerTop < boxBottom || playerBottom > boxTop);
+        }
+        
+        boolean collidesVertical(Vector3 point, float radius, boolean checkBelow) {
+            float dx = Math.abs(point.x - center.x);
+            float dz = Math.abs(point.z - center.z);
+            
+            if (dx > (size.x * 0.5f + radius) || dz > (size.z * 0.5f + radius)) {
+                return false;
+            }
+            
+            if (checkBelow) {
+                // Check if landing on top
+                return point.y >= bounds.max.y - 0.5f && point.y <= bounds.max.y + 2f;
+            } else {
+                // Check if hitting ceiling
+                return point.y <= bounds.min.y + 0.5f && point.y >= bounds.min.y - 2f;
+            }
         }
     }
 
