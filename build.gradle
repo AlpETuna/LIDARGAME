@@ -1,0 +1,51 @@
+buildscript {
+    repositories {
+        gradlePluginPortal()
+        maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+        google()
+        mavenCentral()
+    }
+}
+
+allprojects {
+    apply plugin: "eclipse"
+    apply plugin: "java"
+
+    version = '1.0'
+    
+    java {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    ext {
+        appName = "LIDARGAME"
+        gdxVersion = '1.12.1'
+    }
+
+    repositories {
+        mavenLocal()
+        mavenCentral()
+        google()
+        gradlePluginPortal()
+        maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+        maven { url "https://oss.sonatype.org/content/repositories/releases/" }
+    }
+}
+
+project(":desktop") {
+    apply plugin: "java-library"
+
+    dependencies {
+        implementation project(":core")
+        api "com.badlogicgames.gdx:gdx-backend-lwjgl3:$gdxVersion"
+        api "com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-desktop"
+    }
+}
+
+project(":core") {
+    apply plugin: "java-library"
+
+    dependencies {
+        api "com.badlogicgames.gdx:gdx:$gdxVersion"
+    }
+}

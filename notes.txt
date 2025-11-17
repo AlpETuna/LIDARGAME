@@ -1,0 +1,5 @@
+this will be a LIDAR-ish game, where it is pitch black and you can shoot your gun to make your surroundings.
+
+Currently that is all to the idea collision against walls and map generation.
+
+Planning to make in JAVA using libGDX 

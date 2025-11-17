@@ -1,0 +1,43 @@
+apply plugin: "java"
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+sourceSets.main.java.srcDirs = [ "src/main/java/" ]
+sourceSets.main.resources.srcDirs = ["../assets"]
+
+project.ext.mainClassName = "com.lidargame.DesktopLauncher"
+project.ext.assetsDir = new File("../assets")
+
+task run(dependsOn: classes, type: JavaExec) {
+    mainClass = project.mainClassName
+    classpath = sourceSets.main.runtimeClasspath
+    standardInput = System.in
+    workingDir = project.assetsDir
+    ignoreExitValue = true
+    jvmArgs = ['--enable-native-access=ALL-UNNAMED', '--add-opens=java.base/java.lang=ALL-UNNAMED']
+}
+
+task debug(dependsOn: classes, type: JavaExec) {
+    mainClass = project.mainClassName
+    classpath = sourceSets.main.runtimeClasspath
+    standardInput = System.in
+    workingDir = project.assetsDir
+    ignoreExitValue = true
+    debug = true
+}
+
+task dist(type: Jar) {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes 'Main-Class': project.mainClassName
+    }
+    dependsOn configurations.runtimeClasspath
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    with jar
+}
+
+dist.dependsOn classes
